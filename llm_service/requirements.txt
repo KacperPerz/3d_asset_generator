@@ -1,0 +1,4 @@
+fastapi
+uvicorn[standard] # Includes standard ASGI server dependencies
+openai
+# pydantic
