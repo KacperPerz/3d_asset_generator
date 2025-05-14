@@ -1,0 +1,60 @@
+# Environment variables
+.env
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Python virtual environment
+.venv/
+venv/
+ENV/
+env/
+
+# IDE / Editor specific files
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# OS specific files
+.DS_Store
+Thumbs.db
+
+# Docker related build context files (if any large files are copied temporarily)
+# Add specific files or directories if your Docker build process creates large temp artifacts
+# e.g. downloaded_models/
+
+# Local media files if generated and not meant to be committed
+# e.g. output_assets/
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints
+
+# Test outputs
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST 
