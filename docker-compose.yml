@@ -1,0 +1,39 @@
+services:
+  gradio_app:
+    build: ./gradio_app
+    ports:
+      - "7860:7860"
+    volumes:
+      - ./gradio_app:/app
+    environment:
+      # For S3
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION}
+      - S3_BUCKET_NAME=${S3_BUCKET_NAME}
+
+      # URL for the new LLM service (FastAPI)
+      - LLM_SERVICE_URL=http://llm_service:5001
+    depends_on:
+      - llm_service # Gradio app now depends on the new llm_service
+    networks:
+      - asset_generator_net
+
+  llm_service: # New service using FastAPI on Alpine
+    build: ./llm_service
+    volumes:
+      - ./llm_service:/app
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY} # Injected from .env
+    # No need to expose port 5001 to host unless direct testing is needed
+    # as Gradio app will access it over the internal Docker network.
+    ports:
+      - "5001:5001"
+    networks:
+      - asset_generator_net
+
+networks:
+  asset_generator_net:
+    driver: bridge
+
+# Removed minio service and minio_data volume 
