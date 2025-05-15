@@ -1,6 +1,10 @@
 # llm_service/Dockerfile
 FROM python:3.10-slim
 
+# Set environment variables for Python
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONIOENCODING=UTF-8
+
 WORKDIR /app
 
 # Create a non-root user and group
@@ -26,4 +30,5 @@ USER appuser
 # FastAPI will run on port 5001 by default with uvicorn
 EXPOSE 5001
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "5001"] 
+# TEMPORARY CMD for debugging: keeps the container running
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "5001"]
