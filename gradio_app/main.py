@@ -8,27 +8,8 @@ import time
 from core_logic.pipeline import generate_asset_pipeline
 from core_logic.s3_utils import S3_CLIENT_INITIALIZED, get_s3_client # For checking S3 status
 from core_logic.config import LLM_SERVICE_URL # To display which LLM service is being used
+from core_logic.service_clients import call_llm_service # For calling the LLM service
 
-def call_llm_service(user_prompt_text):
-    service_endpoint = f"{LLM_SERVICE_URL}/expand-prompt/"
-    payload = {"prompt": user_prompt_text}
-    print(f"Calling LLM service at {service_endpoint} with payload: {payload}")
-    try:
-        response = requests.post(service_endpoint, json=payload, timeout=60)
-        response.raise_for_status() # Raise an HTTPError for bad responses (4XX or 5XX)
-        print(f"LLM service responded with: {response.status_code}")
-        return response.json()
-    except requests.exceptions.HTTPError as http_err:
-        error_detail = "Unknown error from LLM service."
-        try:
-            error_detail = http_err.response.json().get("detail", error_detail)
-        except json.JSONDecodeError:
-            error_detail = http_err.response.text if http_err.response.text else error_detail
-        print(f"HTTP error calling LLM service: {http_err} - Detail: {error_detail}")
-        raise gr.Error(f"LLM service error: {error_detail}")
-    except requests.exceptions.RequestException as req_err:
-        print(f"Request error calling LLM service: {req_err}")
-        raise gr.Error(f"Could not connect to LLM service: {req_err}")
 
 def s3_status_check():
     # S3_CLIENT_INITIALIZED is imported from core_logic.s3_utils
