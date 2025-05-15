@@ -8,7 +8,6 @@ import time
 from core_logic.pipeline import generate_asset_pipeline
 from core_logic.s3_utils import S3_CLIENT_INITIALIZED, get_s3_client # For checking S3 status
 from core_logic.config import LLM_SERVICE_URL # To display which LLM service is being used
-from core_logic.service_clients import call_llm_service # For calling the LLM service
 
 
 def s3_status_check():
