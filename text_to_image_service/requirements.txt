@@ -4,16 +4,8 @@ uvicorn[standard]
 # PyTorch libraries - will be installed as CPU versions via Dockerfile
 torch
 torchvision
-# torchaudio # Optional, uncomment if needed by a specific model or functionality
 
-# For Stable Diffusion pipelines
 diffusers
 transformers # Often a dependency for pipelines
 accelerate # For optimizing and running on different hardware
 safetensors # Often used for model weights
-
-# AWS SDK for Python
-# boto3 # No longer needed in this service
-
-# For image manipulation if needed (though diffusers might handle PIL internally)
-# Pillow 
