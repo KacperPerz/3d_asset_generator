@@ -14,8 +14,11 @@ services:
 
       # URL for the new LLM service (FastAPI)
       - LLM_SERVICE_URL=http://llm_service:5001
+      # URL for the Text-to-Image service (new)
+      - TEXT_TO_IMAGE_SERVICE_URL=http://text_to_image_service:5003
     depends_on:
       - llm_service # Gradio app now depends on the new llm_service
+      - text_to_image_service # Gradio app also depends on text_to_image_service
     networks:
       - asset_generator_net
 
@@ -32,8 +35,24 @@ services:
     networks:
       - asset_generator_net
 
+  text_to_image_service: # New service for text-to-image
+    platform: linux/amd64 # For compatibility if building on ARM and using CUDA base image
+    build: ./text_to_image_service
+    volumes:
+      - ./text_to_image_service:/app
+      # Cache for Hugging Face models downloaded by this service
+      - image_gen_models_cache:/home/appuser_image_gen/.cache/huggingface 
+      # Volume to inspect generated images locally (optional, for testing)
+      # - ./temp_image_outputs_local:/app/generated_images
+    ports:
+      - "5003:5003" # For direct testing
+    networks:
+      - asset_generator_net
+
 networks:
   asset_generator_net:
     driver: bridge
 
-# Removed minio service and minio_data volume 
+volumes:
+  threed_models_cache: # For threed_generation_service
+  image_gen_models_cache: # For text_to_image_service (new)
