@@ -13,10 +13,6 @@ from .service_clients import (
 )
 from .config import S3_BUCKET_NAME
 
-TEMP_ASSET_DIR = "temp_assets"
-if not os.path.exists(TEMP_ASSET_DIR):
-    os.makedirs(TEMP_ASSET_DIR)
-
 
 def generate_asset_pipeline(user_prompt: str):
     """Orchestrates the asset generation pipeline."""
