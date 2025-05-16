@@ -6,7 +6,7 @@ import json
 import time
 
 from core_logic.pipeline import generate_asset_pipeline
-from core_logic.s3_utils import S3_CLIENT_INITIALIZED, get_s3_client # For checking S3 status
+from core_logic.s3_utils import S3_CLIENT_INITIALIZED, get_s3_client, get_presigned_url # For checking S3 status, getting presigned URL
 from core_logic.config import LLM_SERVICE_URL # To display which LLM service is being used
 
 
@@ -31,24 +31,43 @@ def llm_service_status_check():
     else:
         return "<p style='color:red;font-weight:bold;'>LLM_SERVICE_URL is NOT configured.</p><p>The application will not be able to contact the LLM service.</p>"
 
-def ui_process_request(prompt_text):
-    if not prompt_text.strip():
-        return "Please enter a prompt.", None # Status, JSON output
+def ui_process_request(prompt_text, selected_model_dropdown_value):
+    if not prompt_text:
+        return "Please enter a prompt.", None, None, None # JSON output, Image, 3D Model, Status
 
-    # The pipeline now returns (json_data, status_string)
-    json_data, status_string = generate_asset_pipeline(prompt_text)
+    # Assuming selected_model_dropdown_value is for the 3D model choice, not used in current text-to-image pipeline focus
+    print(f"Received prompt: {prompt_text}, selected 3D model (if applicable): {selected_model_dropdown_value}")
     
-    json_string_output = ""
-    if json_data:
-        try:
-            json_string_output = json.dumps(json_data, indent=2)
-        except Exception as e:
-            status_string += f"\nError formatting JSON for display: {str(e)}"
-            json_string_output = f"Error displaying JSON: {str(e)}"
-    elif not status_string: # If json_data is None and status is also empty
-        status_string = "Pipeline returned no data and no specific error message."
+    # Call the pipeline
+    # It returns: final_json_string_for_upload, image_s3_key, error_message
+    final_json_str, image_s3_key, error_msg = generate_asset_pipeline(prompt_text)
 
-    return status_string, json_string_output
+    status_update = "Processing complete."
+    image_url_for_display = None
+
+    if error_msg:
+        status_update = f"Error: {error_msg}"
+        # Depending on Gradio output components, you might return the error in different places
+        # For now, returning it as the main status. JSON and image might be None.
+        return None, None, None, status_update # JSON output, Image, 3D Model, Status
+
+    if image_s3_key:
+        # Generate a presigned URL for the image to display in Gradio
+        # This requires S3_BUCKET_NAME from config to be accessible or passed to get_presigned_url
+        image_url_for_display = get_presigned_url(image_s3_key) # bucket name might be implicit in your get_presigned_url
+        if image_url_for_display:
+            status_update += f" Image available at S3 key: {image_s3_key}."
+        else:
+            status_update += f" Image S3 key: {image_s3_key}, but failed to generate presigned URL."
+    else:
+        status_update += " No image was generated or uploaded."
+
+    # Placeholder for 3D model output - for now, it's None
+    threed_model_output = None 
+
+    # Return values should match the Gradio outputs order
+    # Example: json_output (Textbox), image_output (Image), model_output (Model3D), status_output (Textbox)
+    return final_json_str, image_url_for_display, threed_model_output, status_update
 
 # --- Gradio Interface Definition ---
 with gr.Blocks(theme=gr.themes.Soft()) as demo:
