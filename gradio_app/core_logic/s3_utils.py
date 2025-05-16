@@ -104,3 +104,118 @@ def get_presigned_url(object_key, bucket_name_override=None, expiration=3600):
     except Exception as e:
         print(f"Unexpected error generating presigned URL: {e}")
         return None
+
+def list_s3_image_keys(bucket_name_param=None, prefix="images/"):
+    """Lists image object keys from an S3 bucket under a given prefix.
+
+    Args:
+        bucket_name_param: The specific bucket to list from. Defaults to S3_BUCKET_NAME from config.
+        prefix: The prefix under which to look for images (e.g., "images/").
+
+    Returns:
+        list: A list of S3 object keys for images found, or an empty list if error/none found.
+    """
+    if not S3_CLIENT_INITIALIZED or not s3_client:
+        print("S3 client not initialized. Cannot list S3 objects.")
+        return []
+
+    target_bucket = bucket_name_param if bucket_name_param else S3_BUCKET_NAME
+    if not target_bucket:
+        print("Target bucket name not provided or configured. Cannot list S3 objects.")
+        return []
+
+    image_keys = []
+    common_image_extensions = ('.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp')
+
+    try:
+        paginator = s3_client.get_paginator('list_objects_v2')
+        page_iterator = paginator.paginate(Bucket=target_bucket, Prefix=prefix)
+
+        for page in page_iterator:
+            if "Contents" in page:
+                for obj in page["Contents"]:
+                    key = obj["Key"]
+                    if key.lower().endswith(common_image_extensions) and not key.endswith('/'): # Ensure it's not a "folder"
+                        image_keys.append(key)
+        
+        print(f"Found {len(image_keys)} images in s3://{target_bucket}/{prefix}")
+        return image_keys
+    except (NoCredentialsError, PartialCredentialsError, ClientError) as e:
+        print(f"S3 related error listing objects: {e}")
+        return []
+    except Exception as e:
+        print(f"Unexpected error listing S3 objects: {e}")
+        return []
+
+def list_s3_json_keys(bucket_name_param=None, prefix="metadata/"):
+    """Lists JSON object keys from an S3 bucket under a given prefix.
+
+    Args:
+        bucket_name_param: The specific bucket to list from. Defaults to S3_BUCKET_NAME from config.
+        prefix: The prefix under which to look for JSON files (e.g., "metadata/").
+
+    Returns:
+        list: A list of S3 object keys for JSON files found, or an empty list if error/none found.
+    """
+    if not S3_CLIENT_INITIALIZED or not s3_client:
+        print("S3 client not initialized. Cannot list S3 JSON objects.")
+        return []
+
+    target_bucket = bucket_name_param if bucket_name_param else S3_BUCKET_NAME
+    if not target_bucket:
+        print("Target bucket name not provided or configured. Cannot list S3 JSON objects.")
+        return []
+
+    json_keys = []
+    try:
+        paginator = s3_client.get_paginator('list_objects_v2')
+        page_iterator = paginator.paginate(Bucket=target_bucket, Prefix=prefix)
+
+        for page in page_iterator:
+            if "Contents" in page:
+                for obj in page["Contents"]:
+                    key = obj["Key"]
+                    if key.lower().endswith('.json') and not key.endswith('/'): # Ensure it's a .json file and not a "folder"
+                        json_keys.append(key)
+        
+        print(f"Found {len(json_keys)} JSON files in s3://{target_bucket}/{prefix}")
+        return json_keys
+    except (NoCredentialsError, PartialCredentialsError, ClientError) as e:
+        print(f"S3 related error listing JSON objects: {e}")
+        return []
+    except Exception as e:
+        print(f"Unexpected error listing S3 JSON objects: {e}")
+        return []
+
+def get_s3_json_content(object_key, bucket_name_param=None):
+    """Fetches the string content of a JSON file from S3.
+
+    Args:
+        object_key: The S3 object key for the JSON file.
+        bucket_name_param: The specific bucket. Defaults to S3_BUCKET_NAME from config.
+
+    Returns:
+        str: The content of the JSON file as a string, or None if error.
+    """
+    if not S3_CLIENT_INITIALIZED or not s3_client:
+        print(f"S3 client not initialized. Cannot get content for {object_key}.")
+        return None
+
+    target_bucket = bucket_name_param if bucket_name_param else S3_BUCKET_NAME
+    if not target_bucket:
+        print(f"Target bucket name not provided or configured. Cannot get content for {object_key}.")
+        return None
+
+    try:
+        response = s3_client.get_object(Bucket=target_bucket, Key=object_key)
+        file_content = response['Body'].read().decode('utf-8')
+        return file_content
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'NoSuchKey':
+            print(f"S3 object not found: s3://{target_bucket}/{object_key}")
+        else:
+            print(f"S3 ClientError getting object {object_key}: {e}")
+        return None
+    except Exception as e:
+        print(f"Unexpected error getting S3 object {object_key}: {e}")
+        return None
