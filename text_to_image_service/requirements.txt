@@ -12,5 +12,8 @@ transformers # Often a dependency for pipelines
 accelerate # For optimizing and running on different hardware
 safetensors # Often used for model weights
 
+# AWS SDK for Python
+# boto3 # No longer needed in this service
+
 # For image manipulation if needed (though diffusers might handle PIL internally)
 # Pillow 
