@@ -3,88 +3,93 @@ import gradio as gr
 import json
 import os
 import uuid
+import io # For BytesIO
 from .s3_utils import (
-    upload_to_s3,
+    upload_file_obj_to_s3,
 )
 from .service_clients import (
     call_llm_service,
+    call_text_to_image_service,
 )
+from .config import S3_BUCKET_NAME
 
 TEMP_ASSET_DIR = "temp_assets"
 if not os.path.exists(TEMP_ASSET_DIR):
     os.makedirs(TEMP_ASSET_DIR)
 
 
-def generate_asset_pipeline(user_prompt_text: str):
-    """
-    Main pipeline for processing the user request.
-    1. Call LLM service to get expanded JSON spec.
-    2. Save JSON spec to a local temp file.
-    3. Upload JSON spec to S3.
-    Returns the JSON spec (as a Python dict) and a status message string.
-    """
-    status_messages = []
+def generate_asset_pipeline(user_prompt: str):
+    """Orchestrates the asset generation pipeline."""
+    print(f"Starting asset generation pipeline for prompt: '{user_prompt}'")
 
-    # 1. Call LLM Service
-    status_messages.append(f"Sending prompt to LLM service: '{user_prompt_text[:50]}...'")
-    expanded_spec_dict, llm_error = call_llm_service(user_prompt_text)
+    # 1. Call LLM to expand the prompt
+    # call_llm_service should return a Python dict directly (or None if error).
+    asset_metadata, error_message_llm = call_llm_service(user_prompt)
     
-    if llm_error:
-        status_messages.append(f"LLM Service Error: {llm_error}")
-        # Return None for JSON, and the collected status messages
-        return None, "\n".join(status_messages) 
+    if error_message_llm:
+        return None, None, f"LLM service error: {error_message_llm}"
     
-    if not expanded_spec_dict:
-        status_messages.append("Failed to get expanded specification from LLM service (empty response).")
-        return None, "\n".join(status_messages)
-    
-    status_messages.append("Successfully received expanded JSON from LLM service.")
+    # Ensure asset_metadata is a dictionary after the call
+    if not isinstance(asset_metadata, dict):
+        error_msg = f"LLM service returned unexpected type: {type(asset_metadata)}. Expected a dictionary."
+        print(error_msg)
+        # If it's None, call_llm_service might have already printed an error.
+        # If it's not None but also not a dict, this is a new error condition.
+        if asset_metadata is not None: # Log the actual problematic data if it's not None
+             print(f"Problematic data from LLM service: {asset_metadata}")
+        return None, None, error_msg
 
-    # Generate a unique ID for this asset generation process
-    asset_id = str(uuid.uuid4())
+    # asset_metadata is now confirmed to be a dictionary (or the function has returned an error)
+    # No need for json.loads() here.
+
+    # Add original prompt to metadata
+    asset_metadata['_user_prompt'] = user_prompt
+    asset_metadata['_version'] = '1.0' # Example versioning
+
+    # 2. Generate Image using Text-to-Image Service
+    image_bytes = call_text_to_image_service(user_prompt) # Using original user prompt for image
     
-    # Define file paths
-    json_filename = f"{asset_id}_metadata.json"
-    local_json_path = os.path.join(TEMP_ASSET_DIR, json_filename)
-
-    # 2. Save JSON spec locally (temp)
-    try:
-        with open(local_json_path, 'w') as f:
-            json.dump(expanded_spec_dict, f, indent=4)
-        status_messages.append(f"Saved JSON metadata locally to {local_json_path}")
-    except IOError as e:
-        status_messages.append(f"Error saving JSON locally: {e}")
-        # Decide if this is fatal or if we can proceed to S3 upload anyway
-        # For now, let's allow proceeding but log the error.
-
-    # 3. Upload JSON to S3
-    s3_json_key = f"metadata/{json_filename}" # Store in a 'metadata' "folder"
-    
-    # Ensure S3 client is available before attempting upload
-    # This check might be better in s3_utils or called once at app startup
-    # from .s3_utils import S3_CLIENT_INITIALIZED # local import for clarity
-    # if not S3_CLIENT_INITIALIZED:
-    #     status_messages.append("S3 client not initialized. Cannot upload JSON.")
-    # else:
-    json_s3_url, s3_error = upload_to_s3(local_json_path, s3_json_key)
-    if s3_error:
-        status_messages.append(f"S3 Upload Error (JSON): {s3_error}")
-    elif json_s3_url:
-        status_messages.append(f"JSON metadata uploaded to S3: {json_s3_url}")
-    else:
-        # This case implies upload_to_s3 returned (None, None) which means S3 might be disabled
-        status_messages.append("JSON metadata S3 upload skipped or failed (S3 client might not be initialized).")
-
-    # Clean up local JSON file after S3 upload attempt (if it exists)
-    if os.path.exists(local_json_path):
+    image_s3_key = None
+    if image_bytes:
+        print("Image data received, attempting to upload to S3.")
+        image_filename = f"generated_image_{uuid.uuid4()}.png"
+        image_s3_key = f"images/{image_filename}" # Define an S3 path for images
+        
         try:
-            os.remove(local_json_path)
-            status_messages.append(f"Cleaned up local JSON file: {local_json_path}")
-        except OSError as e:
-            status_messages.append(f"Error deleting local JSON file {local_json_path}: {e}")
-            # Log this error, but it's not critical for the flow's success
+            # Ensure S3_BUCKET_NAME is valid before calling upload
+            if not S3_BUCKET_NAME:
+                raise ValueError("S3_BUCKET_NAME is not configured.")
+            upload_url, upload_error = upload_file_obj_to_s3(io.BytesIO(image_bytes), S3_BUCKET_NAME, image_s3_key, content_type='image/png')
+            if upload_error:
+                raise Exception(f"S3 upload failed: {upload_error}")
+            print(f"Image uploaded to S3: {upload_url}")
+            asset_metadata['image_s3_key'] = image_s3_key
+        except Exception as e:
+            print(f"Error uploading image to S3: {e}")
+            asset_metadata['image_s3_error'] = str(e) # Log error in metadata
+            # Continue without a fatal error, image_s3_key will remain None or its previous value if error occurred after assignment
+    else:
+        print("No image data received from Text-to-Image service.")
+        asset_metadata['image_s3_key'] = None # Explicitly set to None if no image
 
-    status_messages.append("3D model generation and preview are currently disabled.")
-    
-    # Return the Python dictionary for the JSON spec and the consolidated status messages
-    return expanded_spec_dict, "\n".join(status_messages)
+    # 3. Upload the final JSON metadata to S3
+    final_json_string_for_upload = ""
+    try:
+        final_json_string_for_upload = json.dumps(asset_metadata, indent=2)
+        if not S3_BUCKET_NAME:
+            raise ValueError("S3_BUCKET_NAME is not configured for metadata upload.")
+        json_s3_filename = f"asset_{uuid.uuid4()}.json"
+        json_s3_object_name = f"metadata/{json_s3_filename}"
+        upload_url_json, upload_error_json = upload_file_obj_to_s3(io.BytesIO(final_json_string_for_upload.encode('utf-8')), S3_BUCKET_NAME, json_s3_object_name, content_type='application/json')
+        if upload_error_json:
+            raise Exception(f"S3 upload for JSON metadata failed: {upload_error_json}")
+        print(f"JSON metadata uploaded to S3: {upload_url_json}")
+    except ValueError as ve:
+        print(f"Configuration error for S3 upload: {ve}")
+        return None, None, f"Configuration error: {ve}"
+    except Exception as e:
+        print(f"Error uploading JSON metadata to S3: {e}")
+        return None, None, f"Error uploading JSON metadata to S3: {e}"
+
+    # Return the final JSON content (as a string for display), the image S3 key, and no error message
+    return final_json_string_for_upload, image_s3_key, None
