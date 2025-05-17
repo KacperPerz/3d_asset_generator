@@ -32,12 +32,12 @@ async def expand_prompt_endpoint(request_data: PromptRequest):
     system_message_content = """
     You are an AI assistant that expands a user's concept for a 3D game asset
     into a detailed JSON specification. The JSON should include fields like
-    'original_prompt', 'expanded_description', 'style_keywords', 'primary_colors',
+    'original_prompt', 'expanded_prompt', 'style_keywords', 'primary_colors',
     'materials', and 'key_features'.
     Example output:
     {
       "original_prompt": "a healing potion",
-      "expanded_description": "A bubbling, ethereal blue liquid in a corked glass vial with elven script glowing faintly on the glass.",
+      "expanded_prompt": "A bubbling, ethereal blue liquid in a corked glass vial with elven script glowing faintly on the glass.",
       "style_keywords": ["magical", "elven", "glowing"],
       "primary_colors": ["ethereal blue", "brown (cork)", "silver (script)"],
       "materials": ["glass", "cork", "magical liquid"],
