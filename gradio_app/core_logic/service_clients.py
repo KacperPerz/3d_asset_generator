@@ -25,13 +25,12 @@ def call_text_to_image_service(prompt: str) -> bytes | None:
     except requests.exceptions.RequestException as e:
         print(f"Error calling Text-to-Image service: {e}")
         return None
-
-def call_threed_generation_service(prompt: str, model_id: str = "hunyuan3d-2") -> bytes | None:
+def call_threed_generation_service(prompt: str, model_id: str = "tencent/hunyuan3d-2") -> bytes | None:
     """Calls the 3D Generation service and returns the 3D model file bytes (e.g., GLB).
     
     Args:
         prompt: The text prompt for 3D model generation.
-        model_id: The specific model ID to use (defaulting to Synexa's hunyuan3d-2).
+        model_id: The specific model ID to use (defaulting to Synexa's tencent/hunyuan3d-2).
                   This could be made selectable in the UI later.
                   
     Returns:
