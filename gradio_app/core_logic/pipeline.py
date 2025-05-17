@@ -43,9 +43,7 @@ def process_request_and_upload(user_prompt: str, output_type: str):
     # 2. Conditional Image Generation
     if output_type == "Image":
         print(f"[Pipeline] Output type is Image. Calling Text-to-Image service.")
-        image_prompt = full_json_data.get("image_prompt", user_prompt)
-        if "description" in full_json_data: # Prefer 'description' if LLM provides it
-            image_prompt = full_json_data["description"]
+        image_prompt = full_json_data.get("expanded_prompt", user_prompt)
         
         image_bytes = call_text_to_image_service(image_prompt)
         if image_bytes:

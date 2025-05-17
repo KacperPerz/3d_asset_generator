@@ -1,9 +1,6 @@
 # gradio_app/main.py
 import gradio as gr
-import requests
-import os
 import json
-import time
 
 from core_logic.pipeline import process_request_and_upload
 from core_logic.s3_utils import (
@@ -57,22 +54,22 @@ def ui_process_request(text_prompt: str, output_type: str):
     if not output_type:
         return "{}", None, None, gr.Button(visible=False), gr.Button(visible=False), "Please select an output type (Image or 3D Model)."
     
-    print(f"Received prompt: '{text_prompt}', Output type: {output_type}")
-    json_string, image_s3_key, model_s3_key, error_message = process_request_and_upload(text_prompt, output_type) 
-    
-    output_json = None 
+    print(f"Processing with prompt: '{text_prompt}', Output type: {output_type}")
+    json_string, image_s3_key, model_s3_key, error_message = process_request_and_upload(text_prompt, output_type)
+
+    output_json = None
     output_image_url = None
     output_model_data = None
     download_image_button_visibility = gr.Button(visible=False)
     download_model_button_visibility = gr.Button(visible=False)
-    status_text = error_message 
+    status_text = error_message # This is the error message from process_request_and_upload
 
-    if json_string: 
-        output_json = json_string 
-    elif error_message: 
-        output_json = json.dumps({"error": error_message, "details": "Processing error occurred"}, indent=2)
-    else: 
-        output_json = json.dumps({"status": "Processing complete. No JSON content generated and no errors reported."}, indent=2)
+    if json_string:
+        output_json = json_string
+    elif error_message: # Error from process_request_and_upload
+        output_json = json.dumps({"error": error_message, "details": "Processing error occurred in pipeline"}, indent=2)
+    else: # No JSON and no error from process_request_and_upload
+        output_json = json.dumps({"status": "Processing complete. No JSON content from pipeline and no errors reported by pipeline."}, indent=2)
         if not status_text: status_text = "Processing complete. No JSON/error from pipeline."
 
     if image_s3_key and output_type == "Image":
@@ -84,16 +81,17 @@ def ui_process_request(text_prompt: str, output_type: str):
             no_url_err = f"Failed to get presigned URL for image {image_s3_key}."
             status_text = (status_text + " | " if status_text else "") + no_url_err
             print(no_url_err)
-            if output_json and isinstance(output_json, str): 
-                try: 
+            if output_json and isinstance(output_json, str):
+                try:
                     data = json.loads(output_json)
                     data["image_error"] = no_url_err
                     output_json = json.dumps(data, indent=2)
-                except: pass
-    
+                except json.JSONDecodeError: pass # Ignore if output_json isn't valid JSON already
+                except Exception: pass
+
     if model_s3_key and output_type == "3D Model":
         print(f"Model S3 key: {model_s3_key}")
-        model_presigned_url = get_model_url_for_display(model_s3_key) 
+        model_presigned_url = get_model_url_for_display(model_s3_key)
         if model_presigned_url:
             output_model_data = model_presigned_url
             download_model_button_visibility = gr.Button(value="Download Model (.glb)", link=model_presigned_url, visible=True, interactive=True)
@@ -101,22 +99,23 @@ def ui_process_request(text_prompt: str, output_type: str):
             no_model_url_err = f"Failed to get presigned URL for model {model_s3_key}."
             status_text = (status_text + " | " if status_text else "") + no_model_url_err
             print(no_model_url_err)
-            if output_json and isinstance(output_json, str): 
-                try: 
+            if output_json and isinstance(output_json, str):
+                try:
                     data = json.loads(output_json)
                     data["model_error"] = no_model_url_err
                     output_json = json.dumps(data, indent=2)
-                except: pass
+                except json.JSONDecodeError: pass
+                except Exception: pass
 
     final_status = status_text if status_text else "Processing complete."
-    
-    if output_json is None: 
-        output_json = "{}"
+
+    if output_json is None:
+        output_json = "{}" # Ensure JSON output is never None
 
     if output_type == "Image":
-        output_model_data = None
+        output_model_data = None # Clear model output if image was generated
     elif output_type == "3D Model":
-        output_image_url = None
+        output_image_url = None # Clear image output if model was generated
 
     return output_json, output_image_url, output_model_data, download_image_button_visibility, download_model_button_visibility, final_status
 
