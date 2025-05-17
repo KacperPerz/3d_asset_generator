@@ -1,0 +1,5 @@
+fastapi
+uvicorn[standard]
+requests # For making HTTP requests to Synexa API
+python-dotenv # To load SYNEXA_API_TOKEN from .env for local testing, if needed
+httpx # For async requests in main.py
