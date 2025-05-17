@@ -27,9 +27,9 @@ def process_request_and_upload(user_prompt: str, output_type: str):
     error_message = None
     full_json_data = {}
 
-    asset_id = str(uuid.uuid4()) 
+    asset_id = str(uuid.uuid4()) # Unique identifier for the asset
 
-    # 1. Call LLM service (always done)
+    # 1. Call LLM service
     print(f"[Pipeline] Calling LLM service for prompt: '{user_prompt}'")
     llm_response_data = call_llm_service(user_prompt)
     if not llm_response_data or llm_response_data.get("error"):
@@ -89,7 +89,7 @@ def process_request_and_upload(user_prompt: str, output_type: str):
         error_message = (error_message + " | " if error_message else "") + unknown_type_err
         print(f"[Pipeline] {unknown_type_err}")
 
-    # 4. Prepare and Upload JSON metadata (always done, includes appropriate keys)
+    # 4. Prepare and Upload JSON metadata (always done,includes appropriate keys)
     print(f"[Pipeline] Preparing JSON metadata for upload. Current data: {full_json_data}")
     json_string_to_upload = json.dumps(full_json_data, indent=4)
     json_s3_key = f"{S3_JSON_FOLDER}{asset_id}.json"
