@@ -13,46 +13,68 @@ services:
       - S3_BUCKET_NAME=${S3_BUCKET_NAME}
 
       # URL for the new LLM service (FastAPI)
-      - LLM_SERVICE_URL=http://llm_service:5001
+      - LLM_SERVICE_URL=http://llm_service:8000
       # URL for the Text-to-Image service (new)
-      - TEXT_TO_IMAGE_SERVICE_URL=http://text_to_image_service:5003
+      - TEXT_TO_IMAGE_SERVICE_URL=http://text_to_image_service:8001
+      - THREED_GENERATION_SERVICE_URL=http://threed_generation_service:8002
     depends_on:
-      - llm_service # Gradio app now depends on the new llm_service
-      - text_to_image_service # Gradio app also depends on text_to_image_service
+      - llm_service
+      - text_to_image_service
+      - threed_generation_service
     networks:
-      - asset_generator_net
+      - app_network
 
-  llm_service: # New service using FastAPI on Alpine
+  llm_service:
     build: ./llm_service
-    volumes:
-      - ./llm_service:/app
+    ports:
+      - "8000:8000"
+    networks:
+      - app_network
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY} # Injected from .env
-    # No need to expose port 5001 to host unless direct testing is needed
-    # as Gradio app will access it over the internal Docker network.
-    ports:
-      - "5001:5001"
-    networks:
-      - asset_generator_net
+    volumes:
+      - ./llm_service:/app # Mount the llm_service code
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
   text_to_image_service: # New service for text-to-image
-    platform: linux/amd64 # For compatibility if building on ARM and using CUDA base image
-    build: ./text_to_image_service
-    volumes:
-      - ./text_to_image_service:/app
-      # Cache for Hugging Face models downloaded by this service
-      - image_gen_models_cache:/home/appuser_image_gen/.cache/huggingface 
-      # Volume to inspect generated images locally (optional, for testing)
-      # - ./temp_image_outputs_local:/app/generated_images
+    build:
+      context: ./text_to_image_service
+      # platform: linux/amd64 # Keep this if you are on an M1/M2 Mac and the image needs to be amd64
     ports:
-      - "5003:5003" # For direct testing
+      - "8001:8001"
     networks:
-      - asset_generator_net
+      - app_network
+    volumes:
+      - ./text_to_image_service:/app # Mount the text_to_image_service code
+      - huggingface_cache_image_gen:/home/appuser_image_gen/.cache/huggingface # Named volume for Hugging Face cache
+    command: uvicorn main:app --host 0.0.0.0 --port 8001 --reload
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+  threed_generation_service: # New service for 3D model generation
+    build: ./threed_generation_service
+    ports:
+      - "8002:8002" # Expose a port for this service
+    networks:
+      - app_network
+    environment:
+      - SYNEXA_API_TOKEN=${SYNEXA_API_TOKEN} # Will be read from .env file
+      # - TORCH_HOME=/app/models # Example if models need specific path
+    volumes:
+      - ./threed_generation_service:/app # Mount the service code
+      # - threed_models_cache:/app/models # Optional: if you want to cache models downloaded by the service itself
+    command: uvicorn main:app --host 0.0.0.0 --port 8002 --reload
+    # platform: linux/amd64 # Add if building on ARM and deploying to AMD64 or vice-versa for pytorch compatibility
 
 networks:
-  asset_generator_net:
+  app_network:
     driver: bridge
 
 volumes:
-  threed_models_cache: # For threed_generation_service
-  image_gen_models_cache: # For text_to_image_service (new)
+  huggingface_cache_image_gen: # Define the named volume used by text_to_image_service
+  # threed_models_cache: # Define the named volume if used by threed_generation_service
