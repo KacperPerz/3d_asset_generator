@@ -64,6 +64,16 @@ else:
     if not S3_BUCKET_NAME: missing_configs.append("S3_BUCKET_NAME")
     print(f"S3 client not initialized: Missing S3 config: {', '.join(missing_configs)}.")
 
+def get_s3_public_url(s3_key: str) -> str | None:
+    """Constructs a public S3 URL for a given key, bucket, and region."""
+    if not S3_BUCKET_NAME or not AWS_DEFAULT_REGION:
+        print("Error: S3_BUCKET_NAME or AWS_DEFAULT_REGION is not configured.")
+        return None
+    # Standard public URL format for S3 objects
+    # Ensure the key does not start with a '/' as it's usually handled by S3 or might cause double slashes
+    # However, S3 is generally tolerant of double slashes in the path part.
+    return f"https://{S3_BUCKET_NAME}.s3.{AWS_DEFAULT_REGION}.amazonaws.com/{s3_key.lstrip('/')}"
+
 def get_s3_client():
     """Returns the initialized S3 client if available, else None."""
     return S3_CLIENT
