@@ -63,7 +63,7 @@ services:
     networks:
       - app_network
     environment:
-      - SYNEXA_API_TOKEN=${SYNEXA_API_TOKEN} # Will be read from .env file
+      - SYNEXA_API_KEY=${SYNEXA_API_KEY} # Will be read from .env file
       # - TORCH_HOME=/app/models # Example if models need specific path
     volumes:
       - ./threed_generation_service:/app # Mount the service code
