@@ -1,91 +1,108 @@
 # gradio_app/core_logic/pipeline.py
-import gradio as gr
 import json
-import os
 import uuid
-import io # For BytesIO
 from .s3_utils import (
     upload_file_obj_to_s3,
 )
 from .service_clients import (
     call_llm_service,
     call_text_to_image_service,
+    call_threed_generation_service,
 )
-from .config import S3_BUCKET_NAME
+from .config import S3_JSON_FOLDER, S3_IMAGE_FOLDER, S3_MODEL_FOLDER
 
 
-def generate_asset_pipeline(user_prompt: str):
-    """Orchestrates the asset generation pipeline."""
-    print(f"Starting asset generation pipeline for prompt: '{user_prompt}'")
-
-    # 1. Call LLM to expand the prompt
-    # call_llm_service should return a Python dict directly (or None if error).
-    asset_metadata, error_message_llm = call_llm_service(user_prompt)
-    
-    if error_message_llm:
-        return None, None, f"LLM service error: {error_message_llm}"
-    
-    # Ensure asset_metadata is a dictionary after the call
-    if not isinstance(asset_metadata, dict):
-        error_msg = f"LLM service returned unexpected type: {type(asset_metadata)}. Expected a dictionary."
-        print(error_msg)
-        # If it's None, call_llm_service might have already printed an error.
-        # If it's not None but also not a dict, this is a new error condition.
-        if asset_metadata is not None: # Log the actual problematic data if it's not None
-             print(f"Problematic data from LLM service: {asset_metadata}")
-        return None, None, error_msg
-
-    # asset_metadata is now confirmed to be a dictionary (or the function has returned an error)
-    # No need for json.loads() here.
-
-    # Add original prompt to metadata
-    asset_metadata['_user_prompt'] = user_prompt
-    asset_metadata['_version'] = '1.0' # Example versioning
-
-    # 2. Generate Image using Text-to-Image Service
-    image_bytes = call_text_to_image_service(user_prompt) # Using original user prompt for image
-    
+def process_request_and_upload(user_prompt: str, output_type: str):
+    """
+    Processes the user prompt based on the selected output_type:
+    1. Calls LLM service to get JSON metadata.
+    2. If output_type is 'Image', calls Text-to-Image service and uploads image to S3.
+    3. If output_type is '3D Model', calls 3D Generation service and uploads model to S3.
+    4. Uploads JSON (which includes appropriate S3 key) to S3.
+    5. Returns the JSON string, image S3 key (if any), 3D model S3 key (if any), and error message.
+    """
+    json_s3_key = None
     image_s3_key = None
-    if image_bytes:
-        print("Image data received, attempting to upload to S3.")
-        image_filename = f"generated_image_{uuid.uuid4()}.png"
-        image_s3_key = f"images/{image_filename}" # Define an S3 path for images
+    model_s3_key = None 
+    error_message = None
+    full_json_data = {}
+
+    asset_id = str(uuid.uuid4()) 
+
+    # 1. Call LLM service (always done)
+    print(f"[Pipeline] Calling LLM service for prompt: '{user_prompt}'")
+    llm_response_data = call_llm_service(user_prompt)
+    if not llm_response_data or llm_response_data.get("error"):
+        error_message = f"LLM service error: {llm_response_data.get('details', 'Unknown error')}"
+        return None, None, None, error_message # Critical error, stop here
+    
+    full_json_data = llm_response_data 
+    full_json_data["_user_prompt"] = user_prompt
+    full_json_data["_selected_output_type"] = output_type # Store the choice in metadata
+    
+    # 2. Conditional Image Generation
+    if output_type == "Image":
+        print(f"[Pipeline] Output type is Image. Calling Text-to-Image service.")
+        image_prompt = full_json_data.get("image_prompt", user_prompt)
+        if "description" in full_json_data: # Prefer 'description' if LLM provides it
+            image_prompt = full_json_data["description"]
         
-        try:
-            # Ensure S3_BUCKET_NAME is valid before calling upload
-            if not S3_BUCKET_NAME:
-                raise ValueError("S3_BUCKET_NAME is not configured.")
-            upload_url, upload_error = upload_file_obj_to_s3(io.BytesIO(image_bytes), S3_BUCKET_NAME, image_s3_key, content_type='image/png')
-            if upload_error:
-                raise Exception(f"S3 upload failed: {upload_error}")
-            print(f"Image uploaded to S3: {upload_url}")
-            asset_metadata['image_s3_key'] = image_s3_key
-        except Exception as e:
-            print(f"Error uploading image to S3: {e}")
-            asset_metadata['image_s3_error'] = str(e) # Log error in metadata
-            # Continue without a fatal error, image_s3_key will remain None or its previous value if error occurred after assignment
+        image_bytes = call_text_to_image_service(image_prompt)
+        if image_bytes:
+            image_s3_key = f"{S3_IMAGE_FOLDER}{asset_id}.png"
+            try:
+                upload_file_obj_to_s3(image_bytes, image_s3_key, content_type='image/png')
+                print(f"[Pipeline] Successfully uploaded image to {image_s3_key}")
+                full_json_data["image_s3_key"] = image_s3_key
+            except Exception as e:
+                img_upload_err = f"Image S3 upload error: {e}"
+                error_message = (error_message + " | " if error_message else "") + img_upload_err
+                print(f"[Pipeline] {img_upload_err}")
+                image_s3_key = None # Upload failed, so no key
+        else:
+            img_gen_err = "Text-to-Image service failed to generate image."
+            error_message = (error_message + " | " if error_message else "") + img_gen_err
+            print(f"[Pipeline] {img_gen_err}")
+    
+    # 3. Conditional 3D Model Generation
+    elif output_type == "3D Model":
+        print(f"[Pipeline] Output type is 3D Model. Calling 3D Generation service.")
+        # Using user_prompt directly for 3D model, can be refined if LLM provides specific 3D prompt
+        model_prompt = full_json_data.get("model_prompt", user_prompt)
+
+        model_bytes = call_threed_generation_service(model_prompt) # Pass appropriate prompt
+        if model_bytes:
+            model_s3_key = f"{S3_MODEL_FOLDER}{asset_id}.glb"
+            try:
+                upload_file_obj_to_s3(model_bytes, model_s3_key, content_type='model/gltf-binary')
+                print(f"[Pipeline] Successfully uploaded 3D model to {model_s3_key}")
+                full_json_data["model_s3_key"] = model_s3_key
+            except Exception as e:
+                model_upload_error = f"3D Model S3 upload error: {e}"
+                error_message = (error_message + " | " if error_message else "") + model_upload_error
+                print(f"[Pipeline] {model_upload_error}")
+                model_s3_key = None # Upload failed
+        else:
+            threed_gen_error = "3D Generation service failed to generate model."
+            error_message = (error_message + " | " if error_message else "") + threed_gen_error
+            print(f"[Pipeline] {threed_gen_error}")
     else:
-        print("No image data received from Text-to-Image service.")
-        asset_metadata['image_s3_key'] = None # Explicitly set to None if no image
+        unknown_type_err = f"Unknown output type selected: {output_type}"
+        error_message = (error_message + " | " if error_message else "") + unknown_type_err
+        print(f"[Pipeline] {unknown_type_err}")
 
-    # 3. Upload the final JSON metadata to S3
-    final_json_string_for_upload = ""
+    # 4. Prepare and Upload JSON metadata (always done, includes appropriate keys)
+    print(f"[Pipeline] Preparing JSON metadata for upload. Current data: {full_json_data}")
+    json_string_to_upload = json.dumps(full_json_data, indent=4)
+    json_s3_key = f"{S3_JSON_FOLDER}{asset_id}.json"
     try:
-        final_json_string_for_upload = json.dumps(asset_metadata, indent=2)
-        if not S3_BUCKET_NAME:
-            raise ValueError("S3_BUCKET_NAME is not configured for metadata upload.")
-        json_s3_filename = f"asset_{uuid.uuid4()}.json"
-        json_s3_object_name = f"metadata/{json_s3_filename}"
-        upload_url_json, upload_error_json = upload_file_obj_to_s3(io.BytesIO(final_json_string_for_upload.encode('utf-8')), S3_BUCKET_NAME, json_s3_object_name, content_type='application/json')
-        if upload_error_json:
-            raise Exception(f"S3 upload for JSON metadata failed: {upload_error_json}")
-        print(f"JSON metadata uploaded to S3: {upload_url_json}")
-    except ValueError as ve:
-        print(f"Configuration error for S3 upload: {ve}")
-        return None, None, f"Configuration error: {ve}"
+        upload_file_obj_to_s3(json_string_to_upload.encode('utf-8'), json_s3_key, content_type='application/json')
+        print(f"[Pipeline] Successfully uploaded JSON metadata to {json_s3_key}")
     except Exception as e:
-        print(f"Error uploading JSON metadata to S3: {e}")
-        return None, None, f"Error uploading JSON metadata to S3: {e}"
+        json_upload_error = f"JSON S3 upload error: {e}"
+        error_message = (error_message + " | " if error_message else "") + json_upload_error
+        print(f"[Pipeline] {json_upload_error}")
+        # If JSON upload fails, this is critical. We return None for json_string to indicate this.
+        return None, image_s3_key, model_s3_key, error_message 
 
-    # Return the final JSON content (as a string for display), the image S3 key, and no error message
-    return final_json_string_for_upload, image_s3_key, None
+    return json_string_to_upload, image_s3_key, model_s3_key, error_message
