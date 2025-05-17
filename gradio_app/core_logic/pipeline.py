@@ -3,6 +3,7 @@ import json
 import uuid
 from .s3_utils import (
     upload_file_obj_to_s3,
+    get_s3_public_url
 )
 from .service_clients import (
     call_llm_service,
@@ -40,12 +41,14 @@ def process_request_and_upload(user_prompt: str, output_type: str):
     full_json_data["_user_prompt"] = user_prompt
     full_json_data["_selected_output_type"] = output_type # Store the choice in metadata
     
+    prompt_to_use = full_json_data.get("expanded_prompt", user_prompt)
+
     # 2. Conditional Image Generation
     if output_type == "Image":
         print(f"[Pipeline] Output type is Image. Calling Text-to-Image service.")
-        image_prompt = full_json_data.get("expanded_prompt", user_prompt)
-        
-        image_bytes = call_text_to_image_service(image_prompt)
+        print(f"[Pipeline] Using image prompt: '{prompt_to_use}'")
+
+        image_bytes = call_text_to_image_service(prompt_to_use)
         if image_bytes:
             image_s3_key = f"{S3_IMAGE_FOLDER}{asset_id}.png"
             try:
@@ -64,11 +67,58 @@ def process_request_and_upload(user_prompt: str, output_type: str):
     
     # 3. Conditional 3D Model Generation
     elif output_type == "3D Model":
-        print(f"[Pipeline] Output type is 3D Model. Calling 3D Generation service.")
-        # Using user_prompt directly for 3D model, can be refined if LLM provides specific 3D prompt
-        model_prompt = full_json_data.get("model_prompt", user_prompt)
+        print(f"[Pipeline] Output type is 3D Model. Generating intermediate image first.")
+        
+        # FIRST: Generate image for the 3D model
+        # Using the same prompt_to_use for the intermediate image for now.
+        image_for_3d_prompt = prompt_to_use 
+        print(f"[Pipeline] Generating intermediate image for 3D model using prompt: '{image_for_3d_prompt}'")
+        image_bytes_for_3d = call_text_to_image_service(image_for_3d_prompt)
+        
+        temp_image_s3_key_for_3d = None # Store the S3 key for the intermediate image
+        temp_image_s3_url_for_3d = None # Store the S3 public URL for the intermediate image
 
-        model_bytes = call_threed_generation_service(model_prompt) # Pass appropriate prompt
+        if image_bytes_for_3d:
+            temp_image_s3_key_for_3d = f"{S3_IMAGE_FOLDER}{asset_id}_temp_for_3d.png" # Ensure unique name
+            try:
+                upload_file_obj_to_s3(image_bytes_for_3d, temp_image_s3_key_for_3d, content_type='image/png')
+                print(f"[Pipeline] Successfully uploaded intermediate image for 3D to S3 key: {temp_image_s3_key_for_3d}")
+                full_json_data["intermediate_image_s3_key"] = temp_image_s3_key_for_3d # For traceability
+                
+                # Get the public URL for the uploaded image
+                temp_image_s3_url_for_3d = get_s3_public_url(temp_image_s3_key_for_3d)
+                if temp_image_s3_url_for_3d:
+                    print(f"[Pipeline] Intermediate image S3 public URL: {temp_image_s3_url_for_3d}")
+                    full_json_data["intermediate_image_s3_url"] = temp_image_s3_url_for_3d
+                else:
+                    # This case should ideally not happen if bucket/region are configured
+                    print(f"[Pipeline] CRITICAL: Could not generate S3 public URL for key {temp_image_s3_key_for_3d}. 3D gen will likely fail.")
+                    # temp_image_s3_url_for_3d remains None, error will be caught before calling 3D service
+
+            except Exception as e:
+                img_upload_err = f"Intermediate image S3 upload error for 3D: {e}"
+                error_message = (error_message + " | " if error_message else "") + img_upload_err
+                print(f"[Pipeline] {img_upload_err}")
+                temp_image_s3_key_for_3d = None # Upload failed
+                temp_image_s3_url_for_3d = None
+        else:
+            img_gen_err = "Text-to-Image service failed to generate intermediate image for 3D model."
+            error_message = (error_message + " | " if error_message else "") + img_gen_err
+            print(f"[Pipeline] {img_gen_err}")
+
+        # SECOND: Call 3D generation service, passing the S3 URL of the generated image
+        model_bytes = None
+        if temp_image_s3_url_for_3d: # Only proceed if we have an image S3 URL
+            print(f"[Pipeline] Using model prompt: '{prompt_to_use}' and image S3 URL: '{temp_image_s3_url_for_3d}' for 3D generation.")
+            # Ensure call_threed_generation_service expects a URL (image_s3_key parameter name might be misleading now)
+            model_bytes = call_threed_generation_service(prompt_to_use, image_input_url=temp_image_s3_url_for_3d)
+        else:
+            # If intermediate image generation/upload/URL generation failed, we cannot proceed.
+            threed_img_missing_err = "Cannot call 3D generation: intermediate image S3 URL is missing or failed to generate/upload."
+            error_message = (error_message + " | " if error_message else "") + threed_img_missing_err
+            print(f"[Pipeline] {threed_img_missing_err}")
+            # model_bytes remains None
+
         if model_bytes:
             model_s3_key = f"{S3_MODEL_FOLDER}{asset_id}.glb"
             try:
@@ -80,8 +130,11 @@ def process_request_and_upload(user_prompt: str, output_type: str):
                 error_message = (error_message + " | " if error_message else "") + model_upload_error
                 print(f"[Pipeline] {model_upload_error}")
                 model_s3_key = None # Upload failed
-        else:
-            threed_gen_error = "3D Generation service failed to generate model."
+        elif not temp_image_s3_url_for_3d: 
+            # Error about missing intermediate image already handled and logged
+            pass 
+        else: # temp_image_s3_url_for_3d was present, but model_bytes is still None
+            threed_gen_error = "3D Generation service failed to generate model (even with an intermediate image)."
             error_message = (error_message + " | " if error_message else "") + threed_gen_error
             print(f"[Pipeline] {threed_gen_error}")
     else:
@@ -89,7 +142,7 @@ def process_request_and_upload(user_prompt: str, output_type: str):
         error_message = (error_message + " | " if error_message else "") + unknown_type_err
         print(f"[Pipeline] {unknown_type_err}")
 
-    # 4. Prepare and Upload JSON metadata (always done,includes appropriate keys)
+    # 4. Prepare and Upload JSON metadata (always done, includes appropriate keys)
     print(f"[Pipeline] Preparing JSON metadata for upload. Current data: {full_json_data}")
     json_string_to_upload = json.dumps(full_json_data, indent=4)
     json_s3_key = f"{S3_JSON_FOLDER}{asset_id}.json"
