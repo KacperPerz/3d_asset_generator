@@ -1,60 +1,56 @@
 # gradio_app/core_logic/service_clients.py
 import requests
 import json
-from .config import LLM_SERVICE_URL, TEXT_TO_IMAGE_SERVICE_URL
+from .config import LLM_SERVICE_URL, TEXT_TO_IMAGE_SERVICE_URL, THREED_GENERATION_SERVICE_URL
 
-def call_llm_service(prompt_text: str):
+def call_llm_service(prompt: str) -> dict:
     """Calls the LLM service to expand the prompt."""
-    if not LLM_SERVICE_URL:
-        print("Error: LLM_SERVICE_URL is not configured.")
-        return None, "LLM_SERVICE_URL not configured. Please check environment variables."
-    
-    payload = {"prompt": prompt_text}
     try:
-        response = requests.post(f"{LLM_SERVICE_URL}/expand-prompt/", json=payload)
-        response.raise_for_status() # Raises an HTTPError for bad responses (4XX or 5XX)
-        return response.json(), None
+        response = requests.post(f"{LLM_SERVICE_URL}/expand-prompt/", json={"prompt": prompt})
+        response.raise_for_status() 
+        return response.json() 
     except requests.exceptions.RequestException as e:
-        print(f"Request error calling LLM service: {e}")
-        error_message = f"Error connecting to LLM service: {e}"
-        if e.response is not None:
-            try:
-                error_detail = e.response.json().get("detail", e.response.text)
-                error_message += f" - Detail: {error_detail}"
-            except json.JSONDecodeError:
-                error_message += f" - Detail: {e.response.text}"
-        return None, error_message
+        print(f"Error calling LLM service: {e}")
+        # Consider returning a more specific error structure or raising a custom exception
+        return {"error": str(e), "details": "Failed to get response from LLM service"}
 
-def call_text_to_image_service(prompt: str, num_inference_steps: int = 5, guidance_scale: float = 7.0) -> bytes | None:
-    """Calls the text-to-image generation service and returns the image bytes."""
-    if not TEXT_TO_IMAGE_SERVICE_URL:
-        print("Text-to-Image service URL not configured. Skipping call.")
-        return None
-
-    endpoint = f"{TEXT_TO_IMAGE_SERVICE_URL}/generate-image/"
-    payload = {
-        "prompt": prompt,
-        "num_inference_steps": num_inference_steps,
-        "guidance_scale": guidance_scale
-    }
-    print(f"Calling Text-to-Image service at {endpoint} with prompt: '{prompt}'")
+def call_text_to_image_service(prompt: str) -> bytes | None:
+    """Calls the Text-to-Image service and returns the image bytes."""
     try:
-        response = requests.post(endpoint, json=payload, timeout=120) # Increased timeout for image generation
-        response.raise_for_status() # Raises an HTTPError for bad responses (4XX or 5XX)
-        
-        # The response should directly be the image bytes
-        # The content type should be 'image/png' or similar, set by FileResponse
-        if 'image' in response.headers.get('Content-Type', '').lower():
-            print("Successfully received image data from Text-to-Image service.")
-            return response.content # Get the raw image bytes
-        else:
-            print(f"Unexpected Content-Type from Text-to-Image service: {response.headers.get('Content-Type')}")
-            print(f"Response text: {response.text[:200]}...") # Log part of the response if it's not an image
-            return None
-
+        # The service expects a JSON payload with a "prompt" field
+        response = requests.post(f"{TEXT_TO_IMAGE_SERVICE_URL}/generate-image/", json={"prompt": prompt})
+        response.raise_for_status()
+        # The service should return raw image data
+        return response.content
     except requests.exceptions.RequestException as e:
         print(f"Error calling Text-to-Image service: {e}")
         return None
-    except Exception as e:
-        print(f"An unexpected error occurred when calling Text-to-Image service: {e}")
+
+def call_threed_generation_service(prompt: str, model_id: str = "hunyuan3d-2") -> bytes | None:
+    """Calls the 3D Generation service and returns the 3D model file bytes (e.g., GLB).
+    
+    Args:
+        prompt: The text prompt for 3D model generation.
+        model_id: The specific model ID to use (defaulting to Synexa's hunyuan3d-2).
+                  This could be made selectable in the UI later.
+                  
+    Returns:
+        Bytes of the 3D model file if successful, None otherwise.
+    """
+    try:
+        payload = {"prompt": prompt, "model_id": model_id}
+        print(f"Calling 3D Gen Service at {THREED_GENERATION_SERVICE_URL}/generate-3d/ with payload: {payload}")
+        response = requests.post(f"{THREED_GENERATION_SERVICE_URL}/generate-3d/", json=payload, timeout=300) # Increased timeout for potentially long 3D generation
+        response.raise_for_status()
+        # The service should return raw model file data (e.g., .glb)
+        # Check content type if necessary, e.g. response.headers.get('content-type') == 'model/gltf-binary'
+        return response.content
+    except requests.exceptions.Timeout:
+        print(f"Timeout calling 3D Generation service for prompt: {prompt}")
+        return None
+    except requests.exceptions.RequestException as e:
+        print(f"Error calling 3D Generation service: {e}")
+        # Log more details if available, e.g., response.text
+        # if hasattr(e, 'response') and e.response is not None:
+        #     print(f"Response content from 3D service on error: {e.response.text}")
         return None
