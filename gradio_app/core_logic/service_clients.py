@@ -25,11 +25,13 @@ def call_text_to_image_service(prompt: str) -> bytes | None:
     except requests.exceptions.RequestException as e:
         print(f"Error calling Text-to-Image service: {e}")
         return None
-def call_threed_generation_service(prompt: str, model_id: str = "tencent/hunyuan3d-2") -> bytes | None:
+
+def call_threed_generation_service(prompt: str, image_input_url: str | None = None, model_id: str = "tencent/hunyuan3d-2") -> bytes | None:
     """Calls the 3D Generation service and returns the 3D model file bytes (e.g., GLB).
     
     Args:
-        prompt: The text prompt for 3D model generation.
+        prompt: The text prompt for 3D model generation (used as caption by Synexa).
+        image_input_url: Optional public S3 URL for an input image to be used by the 3D model service.
         model_id: The specific model ID to use (defaulting to Synexa's tencent/hunyuan3d-2).
                   This could be made selectable in the UI later.
                   
@@ -38,7 +40,11 @@ def call_threed_generation_service(prompt: str, model_id: str = "tencent/hunyuan
     """
     try:
         payload = {"prompt": prompt, "model_id": model_id}
-        print(f"Calling 3D Gen Service at {THREED_GENERATION_SERVICE_URL}/generate-3d/ with payload: {payload}")
+        if image_input_url:
+            payload["image_s3_key"] = image_input_url # The 3D service API expects 'image_s3_key' in its GenerationRequest
+            
+        # Use json.dumps for a more complete log of the payload
+        print(f"Calling 3D Gen Service at {THREED_GENERATION_SERVICE_URL}/generate-3d/ with payload: {json.dumps(payload)}")
         response = requests.post(f"{THREED_GENERATION_SERVICE_URL}/generate-3d/", json=payload, timeout=300) # Increased timeout for potentially long 3D generation
         response.raise_for_status()
         # The service should return raw model file data (e.g., .glb)
