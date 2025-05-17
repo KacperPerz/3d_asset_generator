@@ -18,9 +18,8 @@ except Exception as e:
     print(f"Error initializing OpenAI client: {e}. OPENAI_API_KEY might be missing.")
     OPENAI_CLIENT_INITIALIZED = False
 
+
 @app.post("/expand-prompt/")
-# Using Body(..., embed=True) makes FastAPI expect {"prompt": "your prompt text"}
-# Or define PromptRequest Pydantic model and use: async def expand_prompt_endpoint(request_data: PromptRequest):
 async def expand_prompt_endpoint(request_data: PromptRequest):
     if not OPENAI_CLIENT_INITIALIZED:
         raise HTTPException(status_code=500, detail="OpenAI client not initialized in llm_service. Check API key.")
@@ -57,7 +56,7 @@ async def expand_prompt_endpoint(request_data: PromptRequest):
         expanded_json_string = response.choices[0].message.content
         # FastAPI will automatically convert the Python dict (from json.loads) to a JSON response.
         return json.loads(expanded_json_string)
-    except HTTPException: # Re-raise HTTPExceptions directly
+    except HTTPException:
         raise
     except Exception as e:
         print(f"Error in llm_service OpenAI call: {e}")
