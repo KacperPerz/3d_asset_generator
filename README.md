@@ -18,9 +18,11 @@ This project generates 3D assets or images based on user prompts, leveraging var
 
 To run this project, you need to configure API keys and access for various services:
 
-1. **Place your given .env file in the same folder as docker-compose.yml**
+1. Download repo: `git pull`
 
-2.  **Running the Application:**
+2. **Place your given .env file in the same folder as docker-compose.yml**
+
+3.  **Running the Application:**
     *   Ensure Docker and Docker Compose are installed.
     *   Navigate to the project root.
     *   Create/update your `.env` file with the necessary credentials and configurations.
