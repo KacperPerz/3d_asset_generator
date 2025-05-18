@@ -75,37 +75,32 @@ def ui_process_request(text_prompt: str, output_type: str):
     if image_s3_key and output_type == "Image":
         print(f"Image S3 key: {image_s3_key}")
         output_image_url = get_presigned_url(image_s3_key)
-        if output_image_url:
-            download_image_button_visibility = gr.Button(value="Download Image", link=output_image_url, visible=True, interactive=True)
-        else:
-            no_url_err = f"Failed to get presigned URL for image {image_s3_key}."
-            status_text = (status_text + " | " if status_text else "") + no_url_err
-            print(no_url_err)
-            if output_json and isinstance(output_json, str):
-                try:
-                    data = json.loads(output_json)
-                    data["image_error"] = no_url_err
-                    output_json = json.dumps(data, indent=2)
-                except json.JSONDecodeError: pass # Ignore if output_json isn't valid JSON already
-                except Exception: pass
+        if not output_image_url:
+          no_url_err = f"Failed to get presigned URL for image {image_s3_key}."
+          status_text = (status_text + " | " if status_text else "") + no_url_err
+          print(no_url_err)
+          if output_json and isinstance(output_json, str):
+              try:
+                  data = json.loads(output_json)
+                  data["image_error"] = no_url_err
+                  output_json = json.dumps(data, indent=2)
+              except json.JSONDecodeError: pass # Ignore if output_json isn't valid JSON already
+              except Exception: pass
 
     if model_s3_key and output_type == "3D Model":
         print(f"Model S3 key: {model_s3_key}")
-        model_presigned_url = get_model_url_for_display(model_s3_key)
-        if model_presigned_url:
-            output_model_data = model_presigned_url
-            download_model_button_visibility = gr.Button(value="Download Model (.glb)", link=model_presigned_url, visible=True, interactive=True)
-        else:
-            no_model_url_err = f"Failed to get presigned URL for model {model_s3_key}."
-            status_text = (status_text + " | " if status_text else "") + no_model_url_err
-            print(no_model_url_err)
-            if output_json and isinstance(output_json, str):
-                try:
-                    data = json.loads(output_json)
-                    data["model_error"] = no_model_url_err
-                    output_json = json.dumps(data, indent=2)
-                except json.JSONDecodeError: pass
-                except Exception: pass
+        output_model_data = get_model_url_for_display(model_s3_key)
+        if not output_model_data:
+          no_model_url_err = f"Failed to get presigned URL for model {model_s3_key}."
+          status_text = (status_text + " | " if status_text else "") + no_model_url_err
+          print(no_model_url_err)
+          if output_json and isinstance(output_json, str):
+              try:
+                  data = json.loads(output_json)
+                  data["model_error"] = no_model_url_err
+                  output_json = json.dumps(data, indent=2)
+              except json.JSONDecodeError: pass
+              except Exception: pass
 
     final_status = status_text if status_text else "Processing complete."
 
@@ -178,12 +173,11 @@ def load_s3_json_and_linked_image_to_viewer(selected_json_s3_key: str):
 
 def populate_s3_image_dropdown():
     try:
-        choices = list_images_with_prompts_from_metadata() 
+        choices = list_images_with_prompts_from_metadata() # This returns (display_name, s3_key)
         print(f"[populate_s3_image_dropdown] Choices from S3: {choices}")
         if not choices:
             return gr.Dropdown(choices=["No images found"], value=None, interactive=False, label="Select Image by User Prompt")
-        dropdown_choices = [(f"{prompt} (Image: {key.split('/')[-1]})", key) for prompt, key in choices]
-        return gr.Dropdown(choices=dropdown_choices, value=dropdown_choices[0][1] if dropdown_choices else None, label="Select Image by User Prompt", interactive=True)
+        return gr.Dropdown(choices=choices, value=choices[0][1] if choices else None, label="Select Image by User Prompt", interactive=True)
     except Exception as e:
         print(f"Error populating S3 Image dropdown: {e}")
         return gr.Dropdown(choices=["Error loading images"], value=None, interactive=False, label="Select Image by User Prompt")
@@ -199,12 +193,11 @@ def load_s3_image_to_viewer(selected_image_s3_key: str):
 
 def populate_s3_model_dropdown():
     try:
-        choices = list_models_with_prompts_from_metadata() 
+        choices = list_models_with_prompts_from_metadata() # This returns (display_name, s3_key)
         print(f"[populate_s3_model_dropdown] Choices from S3: {choices}") 
         if not choices:
             return gr.Dropdown(choices=["No 3D models found"], value=None, interactive=False, label="Select 3D Model by User Prompt")
-        dropdown_choices = [(f"{prompt} (Model: {key.split('/')[-1]})", key) for prompt, key in choices]
-        return gr.Dropdown(choices=dropdown_choices, value=dropdown_choices[0][1] if dropdown_choices else None, label="Select 3D Model by User Prompt", interactive=True)
+        return gr.Dropdown(choices=choices, value=choices[0][1] if choices else None, label="Select 3D Model by User Prompt", interactive=True)
     except Exception as e:
         print(f"Error populating S3 Model dropdown: {e}")
         return gr.Dropdown(choices=["Error loading 3D models"], value=None, interactive=False, label="Select 3D Model by User Prompt")
@@ -256,16 +249,12 @@ def update_output_visibility(output_choice: str):
     if output_choice == "Image":
         return {
             gen_image_output: gr.Image(visible=True),
-            gen_image_download_button: gr.Button(visible=False), # Visibility handled by ui_process_request based on actual file
-            gen_model_output: gr.Model3D(visible=False, value=None), # Hide and clear model output
-            gen_model_download_button: gr.Button(visible=False)
+            gen_model_output: gr.Model3D(visible=False, value=None), 
         }
     elif output_choice == "3D Model":
         return {
-            gen_image_output: gr.Image(visible=False, value=None), # Hide and clear image output
-            gen_image_download_button: gr.Button(visible=False),
+            gen_image_output: gr.Image(visible=True),
             gen_model_output: gr.Model3D(visible=True),
-            gen_model_download_button: gr.Button(visible=False) # Visibility handled by ui_process_request
         }
     return {} # Should not happen
 
