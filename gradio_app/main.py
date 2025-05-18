@@ -151,21 +151,28 @@ def load_s3_json_and_linked_image_to_viewer(selected_json_s3_key: str):
 
     json_display_string = json.dumps(json_content_dict, indent=2)
     
-    image_s3_key_from_json = json_content_dict.get("image_s3_key")
-    if image_s3_key_from_json:
-        linked_image_url = get_presigned_url(image_s3_key_from_json)
+    # Try to get the specific intermediate image key first, then fall back to the general image key
+    image_s3_key_to_load = json_content_dict.get("intermediate_image_s3_key")
+    if not image_s3_key_to_load:
+        image_s3_key_to_load = json_content_dict.get("image_s3_key")
+
+    if image_s3_key_to_load:
+        linked_image_url = get_presigned_url(image_s3_key_to_load)
         if not linked_image_url:
-            print(f"Could not get presigned URL for linked image: {image_s3_key_from_json}")
-            json_content_dict["_viewer_warning_image_url"] = f"Failed to get presigned URL for {image_s3_key_from_json}"
-            json_display_string = json.dumps(json_content_dict, indent=2) 
+            print(f"Could not get presigned URL for linked image: {image_s3_key_to_load}")
+            # Modify the dict directly to add warning, then re-dump for display
+            warning_dict = json.loads(json_display_string) 
+            warning_dict["_viewer_warning_image_url"] = f"Failed to get presigned URL for {image_s3_key_to_load}"
+            json_display_string = json.dumps(warning_dict, indent=2)
 
     model_s3_key_from_json = json_content_dict.get("model_s3_key")
     if model_s3_key_from_json:
         linked_model_url = get_model_url_for_display(model_s3_key_from_json)
         if not linked_model_url:
             print(f"Could not get presigned URL for linked model: {model_s3_key_from_json}")
-            json_content_dict["_viewer_warning_model_url"] = f"Failed to get presigned URL for {model_s3_key_from_json}"
-            json_display_string = json.dumps(json_content_dict, indent=2) 
+            warning_dict = json.loads(json_display_string)
+            warning_dict["_viewer_warning_model_url"] = f"Failed to get presigned URL for {model_s3_key_from_json}"
+            json_display_string = json.dumps(warning_dict, indent=2)
             
     return json_display_string, linked_image_url, linked_model_url
 
@@ -204,12 +211,45 @@ def populate_s3_model_dropdown():
 
 def load_s3_model_to_viewer(selected_model_s3_key: str):
     print(f"[load_s3_model_to_viewer] Selected S3 Key: {selected_model_s3_key}") 
-    if not selected_model_s3_key or selected_model_s3_key == "No 3D models found" or selected_model_s3_key == "Error loading 3D models":
-        return None
+    source_image_url = None
+    model_url = None
+
+    if not selected_model_s3_key or selected_model_s3_key == "No 3D models found"\
+        or selected_model_s3_key == "Error loading 3D models":
+        return None, None # Return None for both model and image
+
+    # Attempt to get the model URL first
     model_url = get_model_url_for_display(selected_model_s3_key)
     if not model_url:
-        print(f"Could not get presigned URL for 3D model: {selected_model_s3_key}")
-    return model_url
+        print(f"[load_s3_model_to_viewer] Could not get presigned URL for 3D model: {selected_model_s3_key}")
+        # model_url is already None, will proceed to find source image
+
+    # Try to find the source image from metadata, regardless of model_url success
+    try:
+        all_json_s3_keys = list_s3_json_keys()
+        found_source_image_key = None
+        for json_s3_key in all_json_s3_keys:
+            json_content = get_s3_json_content(json_s3_key)
+            if json_content and json_content.get("model_s3_key") == selected_model_s3_key:
+                found_source_image_key = json_content.get("intermediate_image_s3_key") # Corrected key name
+                if found_source_image_key:
+                    print(f"[load_s3_model_to_viewer] Found source image key '{found_source_image_key}'\
+                           in metadata '{json_s3_key}' for model '{selected_model_s3_key}'")
+                    break # Found the image key
+                else:
+                    print(f"[load_s3_model_to_viewer] Metadata '{json_s3_key}' linked to model\
+                           '{selected_model_s3_key}' but contains no 'intermediate_image_s3_key' field.")
+            
+        if found_source_image_key:
+            source_image_url = get_presigned_url(found_source_image_key)
+            if not source_image_url:
+                print(f"[load_s3_model_to_viewer] Could not get presigned URL for source image: {found_source_image_key}")
+        else:
+            print(f"[load_s3_model_to_viewer] No source image key found in any metadata for model: {selected_model_s3_key}")
+    except Exception as e:
+        print(f"[load_s3_model_to_viewer] Error while trying to find source image for model '{selected_model_s3_key}': {e}")
+
+    return model_url, source_image_url
 
 # --- Function to update visibility of output previews --- 
 def update_output_visibility(output_choice: str):
@@ -236,12 +276,14 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
     with gr.Row():
         s3_status_html = gr.HTML(s3_status_check())
         llm_status_html = gr.HTML(llm_service_status_check())
+    
 
     with gr.Tabs():
         with gr.TabItem("Generate Asset"):
             gr.Markdown("## Generate New Asset")
             with gr.Row():
-                prompt_input = gr.Textbox(label="Asset Description Prompt", placeholder="e.g., futuristic laser sword", scale=3)
+                prompt_input = gr.Textbox(label="Asset Description Prompt",\
+                                           placeholder="e.g., futuristic laser sword", scale=3)
             
             output_type_radio = gr.Radio(
                 choices=["Image", "3D Model"], 
@@ -258,10 +300,12 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
                 gen_json_output = gr.JSON(label="Generated JSON Specification")
             with gr.Row(): 
                 with gr.Column() as image_output_col: # Assign to variable for easier reference if needed
-                    gen_image_output = gr.Image(label="Generated Image Preview", type="filepath", interactive=False, visible=True) # Visible by default
+                    gen_image_output = gr.Image(label="Generated Image Preview", type="filepath",\
+                                                 interactive=False, visible=True) # Visible by default
                     gen_image_download_button = gr.Button("Download Image", visible=False)
                 with gr.Column() as model_output_col: # Assign to variable
-                    gen_model_output = gr.Model3D(label="Generated 3D Model Preview", interactive=False, visible=False) # Hidden by default
+                    gen_model_output = gr.Model3D(label="Generated 3D Model Preview",\
+                                                   interactive=False, visible=False) # Hidden by default
                     gen_model_download_button = gr.Button("Download Model (.glb)", visible=False)
             
             # Event handler for radio button change
@@ -297,25 +341,30 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
             refresh_s3_images_button.click(fn=populate_s3_image_dropdown,outputs=[s3_image_key_dropdown])
             s3_image_key_dropdown.change(fn=load_s3_image_to_viewer,inputs=[s3_image_key_dropdown],outputs=[s3_image_viewer])
 
-        with gr.TabItem("View S3 Metadata"):
-            gr.Markdown("## View Existing JSON Metadata & Linked Assets from S3")
-            refresh_s3_json_button = gr.Button("Refresh Metadata List from S3")
-            s3_json_key_dropdown = gr.Dropdown(label="Select JSON by User Prompt", choices=[], interactive=True)
-            with gr.Row():
-                s3_json_viewer = gr.JSON(label="S3 JSON Content Viewer")
-                with gr.Column(): 
-                    s3_metadata_linked_image_viewer = gr.Image(label="Linked Image from Metadata", type="filepath", interactive=False)
-                    s3_metadata_linked_model_viewer = gr.Model3D(label="Linked 3D Model from Metadata", interactive=False)
-            refresh_s3_json_button.click(fn=populate_s3_json_dropdown, outputs=[s3_json_key_dropdown])
-            s3_json_key_dropdown.change(fn=load_s3_json_and_linked_image_to_viewer,inputs=[s3_json_key_dropdown],outputs=[s3_json_viewer, s3_metadata_linked_image_viewer, s3_metadata_linked_model_viewer])
-
         with gr.TabItem("View 3D Models"):
             gr.Markdown("## View Existing 3D Models from S3")
             refresh_s3_models_button = gr.Button("Refresh Model List from S3")
             s3_model_key_dropdown = gr.Dropdown(label="Select 3D Model by User Prompt", choices=[], interactive=True)
-            s3_model_viewer = gr.Model3D(label="S3 Model Viewer", interactive=False)
+            with gr.Row():
+                s3_model_viewer = gr.Model3D(label="S3 Model Viewer", interactive=False, scale=2)
+                s3_model_source_image_viewer = gr.Image(label="Source Image for Model", type="filepath", interactive=False, scale=1)
             refresh_s3_models_button.click(fn=populate_s3_model_dropdown, outputs=[s3_model_key_dropdown])
-            s3_model_key_dropdown.change(fn=load_s3_model_to_viewer,inputs=[s3_model_key_dropdown],outputs=[s3_model_viewer])
+            s3_model_key_dropdown.change(fn=load_s3_model_to_viewer,inputs=[s3_model_key_dropdown],\
+                                         outputs=[s3_model_viewer, s3_model_source_image_viewer]) # Update outputs
+
+        with gr.TabItem("View S3 Metadata"):
+          gr.Markdown("## View Existing JSON Metadata & Linked Assets from S3")
+          refresh_s3_json_button = gr.Button("Refresh Metadata List from S3")
+          s3_json_key_dropdown = gr.Dropdown(label="Select JSON by User Prompt", choices=[], interactive=True)
+          with gr.Row():
+              s3_json_viewer = gr.JSON(label="S3 JSON Content Viewer")
+              with gr.Column(): 
+                  s3_metadata_linked_image_viewer = gr.Image(label="Linked Image from Metadata", type="filepath", interactive=False)
+                  s3_metadata_linked_model_viewer = gr.Model3D(label="Linked 3D Model from Metadata", interactive=False)
+          refresh_s3_json_button.click(fn=populate_s3_json_dropdown, outputs=[s3_json_key_dropdown])
+          s3_json_key_dropdown.change(fn=load_s3_json_and_linked_image_to_viewer,inputs=[s3_json_key_dropdown],\
+                                      outputs=[s3_json_viewer, s3_metadata_linked_image_viewer, s3_metadata_linked_model_viewer])
+
     
     def initial_load():
         print("[initial_load] Populating dropdowns...")
@@ -327,9 +376,7 @@ with gr.Blocks(theme=gr.themes.Soft()) as demo:
         print(f"[initial_load] Model Dropdown Update: {model_dd_update}")
         # Also set initial visibility based on default radio choice ("Image")
         initial_visibility_updates = update_output_visibility("Image")
-        # This requires outputs of initial_load to include these components
-        # However, demo.load outputs are for dropdowns. 
-        # It's simpler to set initial visibility directly on components.
+
         return image_dd_update, json_dd_update, model_dd_update 
 
     demo.load(initial_load, None, [s3_image_key_dropdown, s3_json_key_dropdown, s3_model_key_dropdown])

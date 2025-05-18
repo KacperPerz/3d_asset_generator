@@ -68,7 +68,7 @@ async def generate_3d_model(request: GenerationRequest):
         synexa_input_payload = {
             "caption": request.prompt,  # Use prompt as caption
             "image": request.image_s3_key,
-            "steps": 2,  # Renamed from num_inference_steps
+            "steps": 10,  # Renamed from num_inference_steps
             "guidance_scale": 5.5,
             "octree_resolution": 256, # Synexa expects string for this model based on their example, but API error showed int. Let's try int first.
             "shape_only": False,  # To enable textures (texture: True was the old goal)
@@ -78,7 +78,7 @@ async def generate_3d_model(request: GenerationRequest):
         print(f"[3D Gen Service] WARNING: Using fallback payload for model '{model_to_use}'. This might not be optimal or valid.")
         synexa_input_payload = {
             "prompt": request.prompt,
-            "num_inference_steps": 2,
+            "num_inference_steps": 10,
             "guidance_scale": 5.5,
             "octree_resolution": 256,
             "face_count": 40000, # This field might not be valid for many models
