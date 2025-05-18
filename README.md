@@ -1,0 +1,147 @@
+# 3D Asset Generator
+
+This project generates 3D assets or images based on user prompts, leveraging various microservices and cloud technologies.
+
+## Table of Contents
+- [Setup Instructions](#setup-instructions)
+- [Technological Choices & Implementation Details](#technological-choices--implementation-details)
+  - [LLM for Prompt Expansion](#llm-for-prompt-expansion)
+  - [Image Generation](#image-generation)
+  - [3D Model Generation](#3d-model-generation)
+  - [Cloud Storage Integration (AWS S3)](#cloud-storage-integration-aws-s3)
+  - [Dynamic Asset Display (Gradio)](#dynamic-asset-display-gradio)
+- [Encountered Difficulties & Solutions](#encountered-difficulties--solutions)
+- [Ideas for Future Development](#ideas-for-future-development)
+
+
+## Setup Instructions
+
+To run this project, you need to configure API keys and access for various services:
+
+1. **Place your given .env file in the same folder as docker-compose.yml**
+
+2.  **Running the Application:**
+    *   Ensure Docker and Docker Compose are installed.
+    *   Navigate to the project root.
+    *   Create/update your `.env` file with the necessary credentials and configurations.
+    *   Run `docker-compose up --build` (or `docker-compose build && docker-compose up`)
+    *   Go to localhost:7860 in your website
+    
+
+## Technological Choices & Implementation Details
+
+### LLM for Prompt Expansion
+*   **Choice of LLM:** *I used gpt-4-turbo-preview as it was important for me to use GPT architecture as those models are creative.*
+*   **Used API**: OpenAI: very easy in service
+*   **Prompt Engineering:**
+    * One-shot strategy
+    * Prompt: `You are an AI assistant that expands a user's concept for a 3D game asset
+    into a detailed JSON specification. The JSON should include fields like
+    'original_prompt', 'expanded_prompt', 'style_keywords', 'primary_colors',
+    'materials', and 'key_features'.
+    Example output:
+    {
+      "original_prompt": "a healing potion",
+      "expanded_prompt": "A bubbling, ethereal blue liquid in a corked glass vial with elven script glowing faintly on the glass.",
+      "style_keywords": ["magical", "elven", "glowing"],
+      "primary_colors": ["ethereal blue", "brown (cork)", "silver (script)"],
+      "materials": ["glass", "cork", "magical liquid"],
+      "key_features": ["bubbling liquid", "glowing elven script"]
+    }
+    Ensure the output is a valid JSON object.`
+
+### Image Generation
+*   **Tool/API:** In text-to-image generation I used diffusers from hugging face, exactly segmind/tiny-sd, because it is small, light and fast with satisfactory results. Besides, hugging face allows easy access to many other models, and I wanted to use at least one model locally.
+*   **Process:** It receives a text prompt (expanded by the LLM service) and returns image bytes.
+*   **Challenges:**
+    *   Ensuring prompt consistency between LLM expansion and what the image model expects.
+    *   Error handling for API failures or content moderation issues.
+*   **Solution:**
+    * A lot of logging what is happening in my code :)
+
+### 3D Model Generation
+*   **Tool/API:** Synexa API, specifically targeting the `tencent/hunyuan3d-2` model.
+*   **Why this one?:** I used synexa API cause it was the cheapest one for hunyuan3d-2 and I really wanted to test this particular model. Why? Cause it creates really cool 3D models which apparence look perfect for game industry. Unfortunetly, synexa is not an very friendly API and allows only for image-to-3d instead of text-to-3d.
+*   **Process:**
+    1.  An initial image is generated using the `text_to_image_service` based on the expanded prompt.
+    2.  This image is uploaded to AWS S3, and a public URL is generated.
+    3.  The `threed_generation_service` calls the Synexa API, providing this public image URL and the original prompt (as a "caption").
+    4.  Synexa's API processes this asynchronously. The service polls a "get prediction" endpoint until the 3D model generation is complete (succeeded, failed, or timed out).
+    5.  If successful, the generated model (e.g., a GLB file) is downloaded from the URL provided by Synexa.
+*   **Challenges and solutions:**
+    *   **API Payload:** The `tencent/hunyuan3d-2` model has specific input requirements (e.g., `caption` instead of `prompt`, `image` URL, `steps` instead of `num_inference_steps`). Adapting the payload was crucial.
+    *   **Asynchronous Operations:** Synexa's API is asynchronous. Implementing a polling mechanism in `threed_generation_service` (using `httpx` and `asyncio`) was necessary to wait for results. This involved:
+        *   Initiating a prediction via a POST request to `https://api.synexa.ai/v1/models/{model_id}/predictions`.
+        *   Repeatedly GETting `https://api.synexa.ai/v1/predictions/{prediction_id}` until status is `succeeded` or `failed`.
+    *   **Image Accessibility:** The Synexa API needed public access to the intermediate image generated by our `text_to_image_service`. This required:
+        *   Uploading the image to S3.
+        *   Initially attempting to use S3 ACLs (`public-read`), which failed because the bucket had ACLs disabled.
+        *   The correct solution is to ensure the S3 bucket has a bucket policy allowing public `GetObject` access. The application generates a standard S3 public URL (`https://{BUCKET}.s3.{REGION}.amazonaws.com/{KEY}`).
+
+### Cloud Storage Integration (AWS S3)
+*   **Service:** AWS S3 is used for storing:
+    *   Generated images (`.png`).
+    *   Generated 3D models (`.glb`).
+    *   Metadata JSON files containing prompts, asset IDs, and S3 keys/URLs for the generated assets.
+*   **Implementation (`gradio_app/core_logic/s3_utils.py`):**
+    *   Uses `boto3` library for S3 interactions.
+    *   Initializes an S3 client using credentials from environment variables.
+    *   Only gradio orchestrate connection with S3!
+    *   Provides functions for:
+        *   Uploading file objects/bytes (`upload_file_obj_to_s3`).
+        *   Generating standard public S3 URLs (`get_s3_public_url`).
+        *   Generating pre-signed URLs (`get_presigned_url`) for secure, temporary access (used for displaying assets in Gradio).
+        *   Listing and retrieving metadata.
+*   **Challenges:**
+    *   **Permissions:** The primary challenge was ensuring the Synexa API could access images stored in S3. This involved correctly configuring S3 bucket policies for public read access, as object ACLs were disabled on the bucket.
+
+### Dynamic Asset Display (Gradio)
+*   **Components Used:**
+    *   `gr.Textbox` for prompt input.
+    *   `gr.Radio` for selecting output type (Image/3D Model).
+    *   `gr.Image` for displaying generated images.
+    *   `gr.Model3D` for displaying generated 3D models. This component can load models via URL or local path.
+    *   `gr.File` for downloading assets.
+    *   `gr.Dropdown` for browsing previously generated assets (populated by listing metadata from S3).
+    *   `gr.Button` for actions like submit, download.
+    *   `gr.Markdown` for status updates and error messages.
+*   **Challenges:**
+    *  None
+
+## Encountered Difficulties & Solutions
+
+1.  **Synexa API `tencent/hunyuan3d-2` Payload:**
+    *   **Problem:** Initial calls failed with `422 Unprocessable Entity` due to incorrect field names (e.g., `prompt` vs `caption`, `num_inference_steps` vs `steps`) and missing required `image` field.
+    *   **Solution:** Carefully reviewed Synexa API documentation (and inferred from their client library examples) to match the exact payload structure for this specific model.
+
+2.  **Synexa API Asynchronous Nature:**
+    *   **Problem:** The 3D model generation is not immediate. The initial API call only starts the job.
+    *   **Solution:** Implemented a polling loop in `threed_generation_service/main.py` to check the prediction status endpoint (`/v1/predictions/{prediction_id}`) until completion.
+
+3.  **Image Accessibility by Synexa API (S3 Permissions):**
+    *   **Problem:** Synexa API reported "File image.png does not exist" or access errors when trying to fetch the intermediate image from an S3 URL.
+    *   **Investigation:**
+        *   Initially tried setting `ACL='public-read'` during S3 upload via `boto3`. This failed with `AccessControlListNotSupported` because the S3 bucket had ACLs disabled (a common modern S3 setup).
+        *   Realized that bucket policies are the correct way to grant broad read access when ACLs are off.
+    *   **Solution:**
+        *   Removed the `ACL='public-read'` from the S3 upload code.
+        *   **The user (you) needs to apply a bucket policy to the S3 bucket that allows public `s3:GetObject` action.** (Example provided in Setup Instructions).
+        *   Ensured the application generates standard S3 public URLs: `https://{BUCKET_NAME}.s3.{AWS_DEFAULT_REGION}.amazonaws.com/{OBJECT_KEY}`.
+
+## Ideas for Future Development
+
+*   **Ability to create a 3D model from an already generated image; add 2D images manually and only then generate a 3D model**
+*   **Selection of text-to-image model from Hugging Face** 
+*   **Set the inference time and how quality you want the image to be**
+*   **More 3D Model Options:** Integrate more 3D generation models/APIs, potentially with different input types (text-to-3D directly).
+*   **In-UI Editing/Refinement:** Basic tools to tweak generated images or 3D models (e.g., cropping, color adjustments, simple mesh operations).
+*   **Scalability & Robustness:**
+    *   Implement a proper job queue (e.g., Celery, RabbitMQ) for handling long-running generation tasks instead of simple polling in the service itself. This would make the services more resilient.
+*   **Cost Management:** Implement tracking for API usage costs.
+*   **Improved UI/UX:**
+    *   Real-time progress updates for generation tasks.
+*   **Security:** Further harden S3 access, potentially using more restrictive CORS policies if direct browser uploads/downloads are not from a trusted domain.
+*   **Model Fine-tuning:** Explore options for fine-tuning image or 3D models on specific styles or object types.
+*   **Texture Generation/Editing for 3D Models:** If the 3D model API supports it, allow for more control over texture generation or upload custom textures.
+---
+
