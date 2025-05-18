@@ -10,10 +10,6 @@ WORKDIR /app
 # Create a non-root user and group
 RUN groupadd --system appuser && useradd --system --gid appuser appuser
 
-# System dependencies for Gradio or its dependencies (if any needed beyond wheels)
-# For example, if a library needed by Gradio for image processing required libjpeg:
-# RUN apt-get update && apt-get install -y --no-install-recommends libjpeg-dev && rm -rf /var/lib/apt/lists/*
-
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 

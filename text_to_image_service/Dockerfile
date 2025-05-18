@@ -6,7 +6,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # Install sudo, procps, git, and other essentials.
 # git is often useful for pip installs from repos or if any packages need it.
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends sudo procps git ca-certificates && \
+    apt-get install -y --no-install-recommends sudo procps ca-certificates && \
     rm -rf /var/lib/apt/lists/* && \
     useradd --create-home --uid 1002 --gid 0 appuser_image_gen && \
     echo "appuser_image_gen ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
@@ -35,7 +35,6 @@ RUN python3 -m pip install --no-cache-dir -r requirements.txt
 
 COPY --chown=appuser_image_gen:root . .
 
-# Port for this service (e.g., 5003)
-EXPOSE 5003
+EXPOSE 8001
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "5003"] 
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001"] 
