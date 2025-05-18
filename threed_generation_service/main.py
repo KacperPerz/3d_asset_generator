@@ -8,7 +8,6 @@ from fastapi.responses import FileResponse, JSONResponse
 
 # --- Configuration ---
 SYNEXA_API_KEY = os.getenv("SYNEXA_API_KEY")
-print(f"[3D Gen Service] SYNEXA_API_KEY: {SYNEXA_API_KEY}")
 SYNEXA_API_URL = "https://api.synexa.ai/v1/predictions"
 # Define the model we intend to use from Synexa's gallery
 # As per https://synexa.ai, tencent/hunyuan3d-2 seems to be a valid model name
